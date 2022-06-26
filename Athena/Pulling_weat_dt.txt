@@ -1,0 +1,94 @@
+WITH start_table AS 
+   (
+   SELECT 
+    	lt.longitude AS wf_long,
+    	lt.latitude AS wf_lat,
+    	date(lt.acq_date) AS wf_acq_date,
+    	st.longitude AS stat_long,
+        st.latitude AS stat_lat,
+        st.id AS stat_id,
+        ST_DISTANCE(ST_POINT(lt.longitude, lt.latitude),ST_POINT(st.longitude, st.latitude)) AS stat_dist,
+        MIN(ST_DISTANCE(ST_POINT(lt.longitude, lt.latitude),ST_POINT(st.longitude, st.latitude))) over (PARTITION BY lt.longitude) AS min_stat_dist
+    FROM default.firmsauto AS lt
+        LEFT OUTER JOIN default.noaa_stations AS st 
+            ON ST_CONTAINS(ST_BUFFER(ST_POINT(lt.longitude, lt.latitude),.5),ST_POINT(st.longitude, st.latitude))
+    ),
+start_table2 AS
+    (
+    SELECT 
+        *
+    FROM start_table
+    UNION
+    SELECT 
+        wf_long,
+    	wf_lat,
+    	wf_acq_date - interval '1' day AS wf_acq_date,
+    	stat_long,
+        stat_lat,
+        stat_id,
+        stat_dist,
+        min_stat_dist
+    FROM start_table
+    UNION
+    SELECT 
+        wf_long,
+    	wf_lat,
+    	wf_acq_date - interval '2' day AS wf_acq_date,
+    	stat_long,
+        stat_lat,
+        stat_id,
+        stat_dist,
+        min_stat_dist
+    FROM start_table
+    UNION
+    SELECT 
+        wf_long,
+    	wf_lat,
+    	wf_acq_date - interval '3' day AS wf_acq_date,
+    	stat_long,
+        stat_lat,
+        stat_id,
+        stat_dist,
+        min_stat_dist
+    FROM start_table
+    ),
+start_table3 AS
+    (
+    SELECT 
+        j.wf_long,
+    	j.wf_lat,
+    	j.wf_acq_date,
+    	date(date_parse(dt.year_date,'%Y%m%d')) AS dt_date,
+    	j.stat_long,
+        j.stat_lat,
+        j.stat_id,
+        j.stat_dist,
+        j.min_stat_dist,
+        dt.id AS dt_id,
+        dt.element AS element,
+	    dt.data_value AS data_value
+    FROM start_table2 AS j
+        FULL OUTER JOIN default.noaa_dt_points AS dt
+    	    ON TRIM(dt.id) = TRIM(j.stat_id) 
+    	    AND j.wf_acq_date = date(date_parse(dt.year_date,'%Y%m%d'))
+    	WHERE dt.q_flag = '' AND CAST(dt.year_date AS INT) > 20200000
+    )
+SELECT wf_long, wf_lat, wf_acq_date, stat_id, dt_date, stat_dist, min_stat_dist1, wt_dt['TMAX'] AS tmax, wt_dt['TMIN'] AS tmin
+FROM (
+    SELECT 
+        wf_long, 
+        wf_lat, 
+        wf_acq_date,
+        dt_date,
+        map_agg(element, data_value) wt_dt,
+        stat_dist,
+        min(stat_dist) over (PARTITION BY wf_long) AS min_stat_dist1,
+        stat_id
+    FROM start_table3
+    WHERE element = 'TMAX' OR element = 'TMIN' 
+    GROUP BY wf_long, wf_lat, wf_acq_date, dt_date, stat_dist, stat_id
+    )
+WHERE stat_dist = min_stat_dist1
+GROUP BY wf_long, wf_lat, stat_id, stat_dist, min_stat_dist1, wt_dt['TMAX'], wt_dt['TMIN'], dt_date, wf_acq_date 
+ORDER BY wf_long, stat_dist
+	;
